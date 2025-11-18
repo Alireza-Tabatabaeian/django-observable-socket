@@ -3,11 +3,11 @@ requires = ["hatchling >= 1.26"]
 build-backend = "hatchling.build"
 
 [project]
-name = "django-channels-router"
-version = "1.0.3"
+name = "django-observable-socket"
+version = "1.0.0"
 description = "HTTP-style WebSocket routing for Django Channels."
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.10"
 license-files = ["LICENSE"]
 authors = [
   { name = "Alireza Tabatabaeian", email = "alireza.tabatabaeian@gmail.com" }
@@ -47,10 +47,10 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/Alireza-Tabatabaeian/django-channels-router"
-Documentation = "https://github.com/Alireza-Tabatabaeian/django-channels-router"
-Source = "https://github.com/Alireza-Tabatabaeian/django-channels-router"
-Issues = "https://github.com/Alireza-Tabatabaeian/django-channels-router/issues"
+Homepage = "https://github.com/Alireza-Tabatabaeian/django-observable-socket"
+Documentation = "https://github.com/Alireza-Tabatabaeian/django-observable-socket"
+Source = "https://github.com/Alireza-Tabatabaeian/django-observable-socket"
+Issues = "https://github.com/Alireza-Tabatabaeian/django-observable-socket/issues"
 
 [tool.setuptools]
 package-dir = {"" = "."}
@@ -58,7 +58,4 @@ include-package-data = true
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["django_channels_router*"]
-
-[tool.setuptools.dynamic]
-version = {attr = "django_channels_router.__version__"}
+include = ["django_observable_socket*"]
