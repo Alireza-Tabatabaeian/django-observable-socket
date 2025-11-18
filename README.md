@@ -7,7 +7,7 @@ Designed to pair seamlessly with [`@djanext/observable-socket`](https://www.npmj
 
 ## Features
 - 🧭 Route names → handler methods (`sayHello` → `on_say_hello`)
-- ⚡ Both sync & async consumers
+- ⚡  Both sync & async consumers
 - 🧩 Optional `hydrate` / `dehydrate` functions
 - 🔁 Built-in heartbeat support (`PING`/`PONG`)
 - 📦 Typed results and HTTP-style status codes
@@ -32,10 +32,10 @@ In your project:
 ```py
 # routing.py
 from django.urls import re_path
-from django_channels_router import SocketRouterConsumer
+from .consumer import AppSocket
 
 websocket_urlpatterns = [
-    re_path(r"ws/app/$", SocketRouterConsumer.as_asgi()),
+    re_path(r"ws/app/$", AppSocket.as_asgi()),
 ]
 ```
 
@@ -46,12 +46,17 @@ websocket_urlpatterns = [
 ```py
 from django_channels_router import SocketRouterConsumer, StatusCodes
 
+
+
+def can_load_article(scope, fetched_data):
+
 class AppSocket(SocketRouterConsumer):
     @SocketRouterConsumer.routes.setter
     def routes(self, _):
         self._routes = [
             {"route": "sayHello"},
             {"route": "getArticle",
+             ""
              "hydrate": lambda headers, p: load_article(p["id"]),
              "dehydrate": lambda art: {"id": art.id, "title": art.title}
              },
@@ -136,7 +141,7 @@ now these converters can be used as follows:
 ```
 
 #### Note:
-**hydrate** function only applies if returned status code by user is 200 series. (199 < status code < 300) 
+**dehydrate** function only applies if returned status code by user is 200 series. (199 < status code < 300) 
 
 ---
 

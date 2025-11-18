@@ -1,35 +1,53 @@
-from abc import ABC, abstractmethod
-from typing import List
+from abc import ABC
+from typing import Tuple
 
-from .route_info import RouteInfo
+from typing_extensions import TypedDict, Generic, ClassVar
+
+from .message import Header
+from .route_info import RouteInfo, HydratedPayload, is_route_info, GenericRouteInfo
+
+
+class HydratedMessageData(TypedDict, Generic[HydratedPayload]):
+    headers: Header
+    payload: HydratedPayload
 
 
 class AbstractSocketRouter(ABC):
-    _routes: List[RouteInfo] = []
+    _routes: ClassVar[Tuple[GenericRouteInfo, ...]] = ()
 
-    @property
-    def routes(self) -> List[RouteInfo]:
-        return self._routes
+    @classmethod
+    def routes(cls) -> Tuple[GenericRouteInfo, ...]:
+        """Class-level accessor returning an immutable tuple of routes."""
+        return cls._routes
 
-    """
-    this method can simply be overridden by passing an array of RouteInfo objects like this:
-    @routes.setter
-    def routes(self, routes: List[RouteInfo]):
-        self._routes = [
-            {route: 'sayHello'}, # hydrate and dehydrate functions are optional
-            {route: 'getArticles', dehydrate: multi_article_serializer}
-        ]
+    def __init_subclass__(cls, **kwargs):
+        super().__init_subclass__(**kwargs)
+        # skip enforcement for the base class itself
+        if cls is AbstractSocketRouter or cls.__name__ in ['SocketRouterConsumer', 'AsyncSocketRouterConsumer']:
+            return
 
-    though this approach is simple, I highly recommend you to put this list in a `SOME.env` file, so it can be shared by both Django and React-based frontend.
-    """
+        if not hasattr(cls, "_routes"):
+            raise TypeError(f"{cls.__name__} must define a `_routes` class attribute")
 
-    @routes.setter
-    @abstractmethod
-    def routes(self, routes: List[RouteInfo]):
-        pass
+        routes = getattr(cls, "_routes")
 
-    def _get_route(self, route: str) -> RouteInfo | None:
-        for route_info in self.routes:
-            if route_info['route'] == route:
+        if isinstance(routes, tuple):
+            routes = list(routes)
+
+        if not isinstance(routes, list):
+            raise TypeError(f"{cls.__name__}._routes must be a tuple or list (got {type(routes).__name__})")
+
+        for i, route_info in enumerate(routes):
+            if not is_route_info(route_info):
+                raise TypeError(f"{cls.__name__}._routes[{i}] looks invalid: {route_info!r}")
+            if not isinstance(route_info, GenericRouteInfo):
+                routes[i] = GenericRouteInfo(**route_info)
+
+        cls._routes = tuple(routes)
+
+    @classmethod
+    def _get_route(cls, path: str) -> GenericRouteInfo | None:
+        for i, route_info in enumerate(cls.routes()):
+            if route_info.route == path:
                 return route_info
         return None

@@ -1,5 +1,3 @@
-from .classes import *
-
 from .socket_router import SocketRouterConsumer
 from .async_socket_router import AsyncSocketRouterConsumer
 
