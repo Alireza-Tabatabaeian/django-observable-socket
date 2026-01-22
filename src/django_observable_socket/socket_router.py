@@ -1,18 +1,19 @@
-from channels.generic.websocket import JsonWebsocketConsumer
-from django.conf import settings
-from pydantic import ValidationError
-from typing_extensions import Callable, Optional
+import logging
 
-from .classes import AuxiliaryStore, SocketResult, AbstractSocketRouter, BaseMessage, RouteInfo, StatusCodes, \
-    HydratedMessageData, RequestMessage, ResponseMessage, set_error, CallError, GenericRouteInfo, FetchedData
+from channels.generic.websocket import JsonWebsocketConsumer
+from pydantic import ValidationError
+
+from .classes import StatusCodes, RequestMessage, ResponseMessage, set_error, \
+    CallError, GenericRouteInfo, BaseRouter, enforce_routes
+from .classes.types import HandlerArg, SocketResult
 from .tools import route_to_method_name, result_is_successful
 
-MainHandler = Callable[[HydratedMessageData, Optional[AuxiliaryStore]], SocketResult]
-
-User = settings.AUTH_USER_MODEL
+logger = logging.getLogger(__name__)
 
 
-class SocketRouterConsumer(JsonWebsocketConsumer, AbstractSocketRouter):
+class SocketRouterConsumer(JsonWebsocketConsumer, BaseRouter):
+    from django.conf import settings
+    User = settings.AUTH_USER_MODEL
     """
     To implement this class, you'll need to assign _routes attribute for it:
 
@@ -39,14 +40,15 @@ class SocketRouterConsumer(JsonWebsocketConsumer, AbstractSocketRouter):
     Read more in README.md about how it facilitates the entire process, using check_data, check_access, hydrate ,and dehydrate functions.
     """
 
+    def __init_subclass__(cls, **kwargs):
+        if cls is not SocketRouterConsumer:
+            enforce_routes(cls)
+
     _user = None
 
     @property
     def user(self) -> User:
         return self._user
-
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
 
     def connect(self):
         self._user = self.scope['user']
@@ -57,7 +59,7 @@ class SocketRouterConsumer(JsonWebsocketConsumer, AbstractSocketRouter):
             message = RequestMessage(**content)
             if message.route == 'PING':  # only heart-bit checks, response, so the client makes sure the connection is open
                 self.send_json(
-                    BaseMessage(
+                    RequestMessage(
                         route='PONG',
                         uuid=message.uuid
                     ).model_dump()
@@ -68,10 +70,7 @@ class SocketRouterConsumer(JsonWebsocketConsumer, AbstractSocketRouter):
             route_info: GenericRouteInfo | None = self._get_route(message.route)
             if not route_info:
                 self.send_json(
-                    message.respond(
-                        payload=set_error(CallError.RouteNotFound),
-                        status=StatusCodes.NOT_FOUND
-                    )
+                    message.error(error=set_error(CallError.RouteNotFound), status=StatusCodes.NOT_FOUND)
                 )
                 return
 
@@ -81,58 +80,51 @@ class SocketRouterConsumer(JsonWebsocketConsumer, AbstractSocketRouter):
                 method = getattr(self, method_name)  # if the method doesn't exist, an exception will be raised
             except AttributeError:
                 self.send_json(
-                    message.respond(
-                        payload=set_error(CallError.MethodNotImplemented),
-                        status=StatusCodes.INTERNAL_SERVER_ERROR
-                    )
+                    message.error(status=StatusCodes.INTERNAL_SERVER_ERROR,
+                                  error=set_error(CallError.MethodNotImplemented))
                 )
                 return
 
-            auxiliary_payload = dict()
+            try:
+                inner_data = HandlerArg(scope=self.scope, headers=message.headers, payload=message.payload,
+                                        store=dict())
 
-            fetched_data: FetchedData = message.fetch_data()
+                check_data = route_info.check_data
+                if check_data and not check_data(inner_data):
+                    self.send_json(
+                        message.error(status=StatusCodes.BAD_REQUEST, error=set_error(CallError.InvalidData))
+                    )
+                    return
 
-            check_data = route_info.check_data
-            if check_data and not check_data(fetched_data, auxiliary_payload):
+                check_access = route_info.check_access
+                if check_access and not check_access(inner_data):
+                    self.send_json(
+                        message.error(error=set_error(CallError.AccessDenied), status=StatusCodes.FORBIDDEN)
+                    )
+                    return
+
+                # hydrate the payload if the function is provided
+                hydrate = route_info.hydrate
+                if hydrate:
+                    inner_data.payload = hydrate(inner_data)
+
+                result: SocketResult = method(inner_data)
+
+                dehydrate = route_info.dehydrate
+                should_dehydrate: bool = dehydrate and result_is_successful(result.get('status', StatusCodes.OK))
+
+                if should_dehydrate:
+                    result.payload = dehydrate(result.payload)
+
                 self.send_json(
-                    message.respond(
-                        payload=set_error(CallError.InvalidData),
-                        status=StatusCodes.BAD_REQUEST
-                    )
+                    message.respond(**result)
                 )
-                return
-
-            check_access = route_info.check_access
-            if check_access and not check_access(self.scope, fetched_data, auxiliary_payload):
-                self.send_json(message.respond(
-                    payload=set_error(CallError.AccessDenied),
-                    status=StatusCodes.FORBIDDEN)
+            except Exception as e:
+                logger.error(str(e))
+                self.send_json(
+                    message.error(status=StatusCodes.INTERNAL_SERVER_ERROR,
+                                  error=set_error(CallError.InternalServerError))
                 )
-                return
-
-            # hydrate the payload if the function is provided
-            hydrate = route_info.hydrate
-            if hydrate:
-                hydrated_payload = hydrate(fetched_data)
-                handler_params: HydratedMessageData = {
-                    'headers': message.headers,
-                    'payload': hydrated_payload
-                }
-                result: SocketResult = method(handler_params, auxiliary_payload)
-            else:
-                result = method(fetched_data, auxiliary_payload)
-
-            dehydrate = route_info.dehydrate
-            should_dehydrate: bool = dehydrate and result_is_successful(result.get('status', StatusCodes.OK))
-            out_payload = dehydrate(result['payload']) if should_dehydrate else result['payload']
-
-            self.send_json(
-                message.respond(
-                    headers=result.get('headers'),
-                    payload=out_payload,
-                    status=result.get('status', StatusCodes.OK)
-                )
-            )
         except ValidationError:
             response = {
                 'uuid': content.get('uuid', ''),
